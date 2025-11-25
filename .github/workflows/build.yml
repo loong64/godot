@@ -11,10 +11,6 @@ on:
   schedule:
     - cron: '0 20 * * *'
 
-permissions:
-  actions: write
-  contents: write
-
 env:
   app_name: 'godot'
   app_repo: 'godotengine/godot'
@@ -50,7 +46,7 @@ jobs:
       - name: Check Release
         id: check-release
         run: |
-          gh release view ${app_version} -R ${{ github.repository }} | grep Goddot_${app_version}_linux.loongarch64.tar.gz >/dev/null 2>&1 || echo "app_build=1" >> $GITHUB_OUTPUT
+          gh release view ${app_version} -R ${{ github.repository }} | grep Goddot_${app_version}_linux.loongarch64.zip >/dev/null 2>&1 || echo "app_build=1" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -159,7 +155,7 @@ jobs:
 
       - name: Create release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           TAG_NAME="${{ env.app_version }}"
           gh release create "${TAG_NAME}" \
