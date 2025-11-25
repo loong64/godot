@@ -1,0 +1,168 @@
+name: build(godot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        default: 'latest'
+        description: 'Package version'
+        type: string
+        required: true
+  schedule:
+    - cron: '0 20 * * *'
+
+permissions:
+  actions: write
+  contents: write
+
+env:
+  app_name: 'godot'
+  app_repo: 'godotengine/godot'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      app_version: ${{ steps.get-version.outputs.app_version }}
+      app_build: ${{ steps.check-release.outputs.app_build }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get Version
+        id: get-version
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.version }}" = "latest" ]; then
+            app_version=$(curl -s "https://api.github.com/repos/${{ env.app_repo }}/releases/latest" | jq -r .tag_name)
+          else
+            app_version=${{ github.event.inputs.version }}
+          fi
+          if [ -z "${app_version}" ] || [ "${app_version}" == "null" ]; then
+            echo "Failed to get version"
+            exit 1
+          fi
+          
+          echo "app_version=${app_version}" >> $GITHUB_ENV
+          echo "app_version=${app_version}" >> $GITHUB_OUTPUT
+          echo ""
+          echo "========== Build Args =========="
+          echo "app_version=${app_version}"
+
+      - name: Check Release
+        id: check-release
+        run: |
+          gh release view ${app_version} -R ${{ github.repository }} | grep Goddot_${app_version}_linux.loongarch64.tar.gz >/dev/null 2>&1 || echo "app_build=1" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    if: needs.check.outputs.app_build == '1'
+    runs-on: ${{ matrix.runner }}
+    needs: check
+    env:
+      app_version: ${{ needs.check.outputs.app_version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ "editor", "template_release", "template_debug" ]
+        include:
+          - arch: loong64
+            platform: loongarch64
+            runner: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ env.app_repo }}
+          ref: ${{ env.app_version }}
+
+      - uses: docker/setup-qemu-action@v3
+
+      - name: Apply Patch
+        run: |
+          # https://github.com/godotengine/godot/pull/110639
+          wget -qO - https://patch-diff.githubusercontent.com/raw/godotengine/godot/pull/110639.patch | patch -p1
+
+          # https://github.com/jrouwe/JoltPhysics/pull/1592
+          cd thirdparty/jolt_physics
+          wget -qO - https://github.com/jrouwe/JoltPhysics/commit/e8c2ecf99c8e7ca883d18bd541d85a142864d667.patch | patch -p1
+
+      - name: Build Binaries
+        run: |
+          DOCKER_IMAGE="ghcr.io/${{ github.repository }}:build-linux-${{ matrix.platform }}"
+          DOCKER_CMD="scons platform=linuxbsd target=${{ matrix.target }} production=yes use_llvm=yes lto=none"
+          docker run --rm \
+            --platform linux/loong64 \
+            --env BUILD_NAME="community" \
+            --volume $(pwd):/io/${{ env.app_name }} \
+            --workdir /io/${{ env.app_name }} \
+            ${DOCKER_IMAGE} \
+            sh -c "${DOCKER_CMD}"
+
+      - name: Check Binaries
+        run: |
+          mkdir -p dist/templates
+          case ${{ matrix.target }} in
+            editor)
+              cp bin/godot.linuxbsd.* dist/godot
+              ;;
+            template_release)
+              cp bin/godot.linuxbsd.* dist/templates/linux_release.${{ matrix.platform }}
+              ;;
+            template_debug)
+              cp bin/godot.linuxbsd.* dist/templates/linux_debug.${{ matrix.platform }}
+              ;;
+          esac
+          ls -al dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.app_name }}-${{ matrix.target }}-linux-${{ matrix.arch }}
+          path: dist
+
+  release:
+    if: needs.check.outputs.app_build == '1'
+    runs-on: ubuntu-24.04
+    needs:
+      - check
+      - build
+    env:
+      app_version: ${{ needs.check.outputs.app_version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download release
+        uses: actions/download-artifact@v5
+        with:
+          pattern: ${{ env.app_name }}-*
+          path: dist
+          merge-multiple: true
+
+      - name: Check binaries
+        run: |
+          cd dist
+          godot_version=${{ env.app_version }}
+          godot_basename="Godot_v${godot_version}"
+
+          # editor
+          binname="${godot_basename}_linux.loongarch64"
+          mv godot ${binname}
+          zip -q -9 -m "${binname}.zip" ${binname}
+
+          # template
+          echo "${godot_version}" templates/version.txt
+          zip -q -9 -r -D "${godot_basename}_export_templates.tpz" templates/*
+
+          rm -rf templates
+          sha512sum ${godot_basename}* > SHA512-SUMS.txt
+          ls -al
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${{ env.app_version }}"
+          gh release create "${TAG_NAME}" \
+            --generate-notes \
+            --title "${TAG_NAME}" \
+            dist/*
