@@ -21,7 +21,7 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     outputs:
       app_version: ${{ steps.get-version.outputs.app_version }}
       app_build: ${{ steps.check-release.outputs.app_build }}
