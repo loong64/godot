@@ -150,7 +150,7 @@ jobs:
           zip -q -9 -m "${binname}.zip" ${binname}
 
           # template
-          echo "${godot_version}" templates/version.txt
+          echo "${godot_version}" > templates/version.txt
           zip -q -9 -r -D "${godot_basename}_export_templates.tpz" templates/*
 
           rm -rf templates
