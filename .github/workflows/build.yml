@@ -83,8 +83,10 @@ jobs:
           wget -qO - https://github.com/godotengine/godot/pull/110639.patch | patch -p1
 
           # https://github.com/jrouwe/JoltPhysics/pull/1592
-          # cd thirdparty/jolt_physics
-          # wget -qO - https://github.com/jrouwe/JoltPhysics/commit/e8c2ecf99c8e7ca883d18bd541d85a142864d667.patch | patch -p1
+          if [[ "${{ env.app_version }}" == 4.5* ]]; then
+            cd thirdparty/jolt_physics
+            wget -qO - https://github.com/jrouwe/JoltPhysics/commit/e8c2ecf99c8e7ca883d18bd541d85a142864d667.patch | patch -p1
+          fi
 
       - name: Build Binaries
         run: |
